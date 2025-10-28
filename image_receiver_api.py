@@ -93,13 +93,12 @@ def run_slam_processing():
             "python", "main.py",
             "--dataset", str(PNG_DIR),
             "--config", "config/base.yaml",
-            "--save-as", save_name,
-            "--no-viz"
+            "--save-as", save_name
         ]
 
         print(f"🔧 Command: {' '.join(cmd)}")
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd)
 
         if result.returncode == 0:
             print("\n" + "="*50)
@@ -113,8 +112,7 @@ def run_slam_processing():
             print("\n" + "="*50)
             print("❌ Processing failed!")
             print("="*50)
-            print("STDOUT:", result.stdout[-500:] if len(result.stdout) > 500 else result.stdout)
-            print("STDERR:", result.stderr[-500:] if len(result.stderr) > 500 else result.stderr)
+            print(f"Return code: {result.returncode}")
 
     finally:
         with processing_lock:
