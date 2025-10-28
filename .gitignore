@@ -138,3 +138,18 @@ screen.yaml
 *.pt
 *.ini
 notebooks/*
+
+# Image and video processing
+incoming_images/
+incoming_images_png/
+pics/
+*.mp4
+*.MP4
+*.avi
+*.mov
+
+# UV
+uv.lock
+
+# Misc
+bashrc
