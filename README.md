@@ -53,7 +53,7 @@ cd MASt3R-SLAM/
 # if you've clone the repo without --recursive run
 # git submodule update --init --recursive
 
-pip install -e thirdparty/mast3r
+pip install -e thirdparty/mast3r # use --no-build-isolation if torch is not found
 pip install -e thirdparty/in3d
 pip install --no-build-isolation -e .
  
