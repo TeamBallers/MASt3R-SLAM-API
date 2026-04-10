@@ -40,6 +40,11 @@ conda install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 pytorch-cuda=
 conda install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 pytorch-cuda=12.4 -c pytorch -c nvidia
 ```
 
+Use mkl < 2025 since that will break installation
+```
+conda install "mkl<2025.0.0"
+```
+
 Clone the repo and install the dependencies.
 ```
 git clone https://github.com/rmurai0610/MASt3R-SLAM.git --recursive
