@@ -63,12 +63,14 @@ def convert_images(input_dir: Path, output_dir: Path) -> int:
         try:
             # Open and save as PNG
             img = Image.open(img_path)
+            width, height = img.size
+            print(f"incoming w x h: {width} x {height}")
             # Convert to RGB if needed (handles RGBA, grayscale, etc.)
             if img.mode != 'RGB':
                 img = img.convert('RGB')
             img.save(output_path, 'PNG')
             width, height = img.size
-            print(f"w x h: {width} x {height}")
+            print(f"saved w x h: {width} x {height}")
         except Exception as e:
             print(f"\nWarning: Failed to convert {img_path.name}: {e}")
             continue
