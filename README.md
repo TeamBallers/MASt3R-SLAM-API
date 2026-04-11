@@ -47,7 +47,7 @@ conda install "mkl<2025.0.0"
 
 Clone the repo and install the dependencies.
 ```
-git clone https://github.com/rmurai0610/MASt3R-SLAM.git --recursive
+git clone https://github.com/TeamBallers/MASt3R-SLAM-API.git --recursive
 cd MASt3R-SLAM/
 
 # if you've clone the repo without --recursive run
