@@ -68,6 +68,9 @@ def convert_images(input_dir: Path, output_dir: Path) -> int:
             # Convert to RGB if needed (handles RGBA, grayscale, etc.)
             if img.mode != 'RGB':
                 img = img.convert('RGB')
+
+            img = img.resize((512, 384), Image.BILINEAR)
+            
             img.save(output_path, 'PNG')
             width, height = img.size
             print(f"saved w x h: {width} x {height}")
