@@ -18,6 +18,8 @@ import time
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
+import glob
+import shutil
 
 from fastapi import FastAPI, File, UploadFile, BackgroundTasks
 from fastapi.responses import JSONResponse
@@ -38,6 +40,10 @@ processing_lock = threading.Lock()
 is_processing = False
 last_process_time = 0
 process_delay = 5  # seconds to wait after last image before processing
+
+# Global state for copy functionality
+copy_mode = False
+copy_path = None
 
 
 def convert_to_png(image_data: bytes, filename: str) -> Path:
@@ -108,6 +114,16 @@ def run_slam_processing():
             print(f"  - Trajectory: logs/{save_name}/*.txt")
             print(f"  - Point cloud: logs/{save_name}/*.ply")
             print(f"  - Keyframes: logs/{save_name}/keyframes/")
+
+            # Copy ply file if copy mode is enabled
+            if copy_mode and copy_path:
+                ply_files = glob.glob(f"logs/{save_name}/*.ply")
+                if ply_files:
+                    ply_file = ply_files[0]
+                    shutil.copy2(ply_file, copy_path)
+                    print(f"Copied ply file to: {copy_path}")
+                else:
+                    print("No ply file found to copy")
         else:
             print("\n" + "="*50)
             print("❌ Processing failed!")
@@ -244,12 +260,20 @@ async def root():
 
 def main():
     global continuous_mode
+    global copy_mode
+    global copy_path
 
     parser = argparse.ArgumentParser(description="MASt3R-SLAM Image Receiver API")
     parser.add_argument(
         "--continuous",
         action="store_true",
         help="Enable continuous processing mode (auto-process after delay)"
+    )
+    parser.add_argument(
+        "--copy",
+        type=str,
+        default=None,
+        help="Path to copy processed images to"
     )
     parser.add_argument(
         "--delay",
@@ -269,6 +293,12 @@ def main():
     continuous_mode = args.continuous
     global process_delay
     process_delay = args.delay
+    
+    if args.copy:
+        copy_mode = True
+        copy_path = Path(args.copy)
+        copy_path.mkdir(exist_ok=True, parents=True)
+        print(f"Will copy processed images to: {copy_path}")
 
     # Start continuous processor thread if enabled
     if continuous_mode:
