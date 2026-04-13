@@ -9,7 +9,6 @@ import torch
 import numpy as np
 import PIL.Image
 from PIL.ImageOps import exif_transpose
-import torchvision.transforms as tvf
 os.environ["OPENCV_IO_ENABLE_OPENEXR"] = "1"
 import cv2  # noqa
 
@@ -20,7 +19,20 @@ try:
 except ImportError:
     heif_support_enabled = False
 
-ImgNorm = tvf.Compose([tvf.ToTensor(), tvf.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+class _ImgNorm:
+    def __call__(self, img):
+        if not isinstance(img, PIL.Image.Image):
+            raise TypeError(f"Expected PIL.Image.Image, got {type(img)}")
+        arr = np.asarray(img, dtype=np.float32) / 255.0
+        if arr.ndim == 2:
+            arr = arr[:, :, None]
+        tensor = torch.from_numpy(arr).permute(2, 0, 1).contiguous()
+        mean = torch.tensor((0.5, 0.5, 0.5), dtype=tensor.dtype).view(3, 1, 1)
+        std = torch.tensor((0.5, 0.5, 0.5), dtype=tensor.dtype).view(3, 1, 1)
+        return (tensor - mean) / std
+
+
+ImgNorm = _ImgNorm()
 
 
 def img_to_arr( img ):

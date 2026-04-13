@@ -7,6 +7,10 @@ from mast3r_slam.mast3r_utils import resize_img
 from mast3r_slam.config import config
 
 
+def _maybe_share(tensor, shared):
+    return tensor.share_memory_() if shared else tensor
+
+
 class Mode(Enum):
     INIT = 0
     TRACKING = 1
@@ -123,7 +127,7 @@ def create_frame(i, img, T_WC, img_size=512, device="cuda:0"):
 
 
 class SharedStates:
-    def __init__(self, manager, h, w, dtype=torch.float32, device="cuda"):
+    def __init__(self, manager, h, w, dtype=torch.float32, device="cuda", shared=True):
         self.h, self.w = h, w
         self.dtype = dtype
         self.device = device
@@ -141,16 +145,16 @@ class SharedStates:
 
         # fmt:off
         # shared state for the current frame (used for reloc/visualization)
-        self.dataset_idx = torch.zeros(1, device=device, dtype=torch.int).share_memory_()
-        self.img = torch.zeros(3, h, w, device=device, dtype=dtype).share_memory_()
-        self.uimg = torch.zeros(h, w, 3, device="cpu", dtype=dtype).share_memory_()
-        self.img_shape = torch.zeros(1, 2, device=device, dtype=torch.int).share_memory_()
-        self.img_true_shape = torch.zeros(1, 2, device=device, dtype=torch.int).share_memory_()
-        self.T_WC = lietorch.Sim3.Identity(1, device=device, dtype=dtype).data.share_memory_()
-        self.X = torch.zeros(h * w, 3, device=device, dtype=dtype).share_memory_()
-        self.C = torch.zeros(h * w, 1, device=device, dtype=dtype).share_memory_()
-        self.feat = torch.zeros(1, self.num_patches, self.feat_dim, device=device, dtype=dtype).share_memory_()
-        self.pos = torch.zeros(1, self.num_patches, 2, device=device, dtype=torch.long).share_memory_()
+        self.dataset_idx = _maybe_share(torch.zeros(1, device=device, dtype=torch.int), shared)
+        self.img = _maybe_share(torch.zeros(3, h, w, device=device, dtype=dtype), shared)
+        self.uimg = _maybe_share(torch.zeros(h, w, 3, device="cpu", dtype=dtype), shared)
+        self.img_shape = _maybe_share(torch.zeros(1, 2, device=device, dtype=torch.int), shared)
+        self.img_true_shape = _maybe_share(torch.zeros(1, 2, device=device, dtype=torch.int), shared)
+        self.T_WC = _maybe_share(lietorch.Sim3.Identity(1, device=device, dtype=dtype).data, shared)
+        self.X = _maybe_share(torch.zeros(h * w, 3, device=device, dtype=dtype), shared)
+        self.C = _maybe_share(torch.zeros(h * w, 1, device=device, dtype=dtype), shared)
+        self.feat = _maybe_share(torch.zeros(1, self.num_patches, self.feat_dim, device=device, dtype=dtype), shared)
+        self.pos = _maybe_share(torch.zeros(1, self.num_patches, 2, device=device, dtype=torch.long), shared)
         # fmt: on
 
     def set_frame(self, frame):
@@ -218,7 +222,7 @@ class SharedStates:
 
 
 class SharedKeyframes:
-    def __init__(self, manager, h, w, buffer=512, dtype=torch.float32, device="cuda"):
+    def __init__(self, manager, h, w, buffer=512, dtype=torch.float32, device="cuda", shared=True):
         self.lock = manager.RLock()
         self.n_size = manager.Value("i", 0)
 
@@ -231,20 +235,20 @@ class SharedKeyframes:
         self.num_patches = h * w // (16 * 16)
 
         # fmt:off
-        self.dataset_idx = torch.zeros(buffer, device=device, dtype=torch.int).share_memory_()
-        self.img = torch.zeros(buffer, 3, h, w, device=device, dtype=dtype).share_memory_()
-        self.uimg = torch.zeros(buffer, h, w, 3, device="cpu", dtype=dtype).share_memory_()
-        self.img_shape = torch.zeros(buffer, 1, 2, device=device, dtype=torch.int).share_memory_()
-        self.img_true_shape = torch.zeros(buffer, 1, 2, device=device, dtype=torch.int).share_memory_()
-        self.T_WC = torch.zeros(buffer, 1, lietorch.Sim3.embedded_dim, device=device, dtype=dtype).share_memory_()
-        self.X = torch.zeros(buffer, h * w, 3, device=device, dtype=dtype).share_memory_()
-        self.C = torch.zeros(buffer, h * w, 1, device=device, dtype=dtype).share_memory_()
-        self.N = torch.zeros(buffer, device=device, dtype=torch.int).share_memory_()
-        self.N_updates = torch.zeros(buffer, device=device, dtype=torch.int).share_memory_()
-        self.feat = torch.zeros(buffer, 1, self.num_patches, self.feat_dim, device=device, dtype=dtype).share_memory_()
-        self.pos = torch.zeros(buffer, 1, self.num_patches, 2, device=device, dtype=torch.long).share_memory_()
-        self.is_dirty = torch.zeros(buffer, 1, device=device, dtype=torch.bool).share_memory_()
-        self.K = torch.zeros(3, 3, device=device, dtype=dtype).share_memory_()
+        self.dataset_idx = _maybe_share(torch.zeros(buffer, device=device, dtype=torch.int), shared)
+        self.img = _maybe_share(torch.zeros(buffer, 3, h, w, device=device, dtype=dtype), shared)
+        self.uimg = _maybe_share(torch.zeros(buffer, h, w, 3, device="cpu", dtype=dtype), shared)
+        self.img_shape = _maybe_share(torch.zeros(buffer, 1, 2, device=device, dtype=torch.int), shared)
+        self.img_true_shape = _maybe_share(torch.zeros(buffer, 1, 2, device=device, dtype=torch.int), shared)
+        self.T_WC = _maybe_share(torch.zeros(buffer, 1, lietorch.Sim3.embedded_dim, device=device, dtype=dtype), shared)
+        self.X = _maybe_share(torch.zeros(buffer, h * w, 3, device=device, dtype=dtype), shared)
+        self.C = _maybe_share(torch.zeros(buffer, h * w, 1, device=device, dtype=dtype), shared)
+        self.N = _maybe_share(torch.zeros(buffer, device=device, dtype=torch.int), shared)
+        self.N_updates = _maybe_share(torch.zeros(buffer, device=device, dtype=torch.int), shared)
+        self.feat = _maybe_share(torch.zeros(buffer, 1, self.num_patches, self.feat_dim, device=device, dtype=dtype), shared)
+        self.pos = _maybe_share(torch.zeros(buffer, 1, self.num_patches, 2, device=device, dtype=torch.long), shared)
+        self.is_dirty = _maybe_share(torch.zeros(buffer, 1, device=device, dtype=torch.bool), shared)
+        self.K = _maybe_share(torch.zeros(3, 3, device=device, dtype=dtype), shared)
         # fmt: on
 
     def __getitem__(self, idx) -> Frame:

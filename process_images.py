@@ -30,9 +30,40 @@ except ImportError:
         return iterable
 
 
+def check_runtime_dependencies() -> bool:
+    """Validate torch + lietorch import compatibility before running conversion/SLAM."""
+    try:
+        import torch  # noqa: F401
+    except Exception as e:
+        print(f"Error: failed to import torch: {e}")
+        return False
+
+    try:
+        import lietorch  # noqa: F401
+    except Exception as e:
+        print("Error: failed to import lietorch.")
+        print(str(e))
+        print("\nFix in this environment:")
+        print('  export TORCH_CUDA_ARCH_LIST="9.0+PTX"')
+        print("  pip install --no-build-isolation -e thirdparty/lietorch-src")
+        return False
+
+    return True
+
+
 def convert_images(input_dir: Path, output_dir: Path) -> int:
     """Convert images from input_dir to PNG format in output_dir"""
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Clear stale image files from previous runs to avoid mixed resolutions.
+    stale_extensions = ['.png', '.jpg', '.jpeg', '.JPG', '.JPEG', '.PNG']
+    stale_files = []
+    for ext in stale_extensions:
+        stale_files.extend(output_dir.glob(f'*{ext}'))
+    for stale_file in stale_files:
+        stale_file.unlink(missing_ok=True)
+    if stale_files:
+        print(f"Removed {len(stale_files)} stale images from {output_dir}")
 
     # Supported image formats
     image_extensions = ['.jpg', '.jpeg', '.png', '.JPG', '.JPEG', '.PNG']
@@ -111,6 +142,30 @@ def run_slam(
     result = subprocess.run(cmd)
 
     return result.returncode
+
+
+def validate_output_images(output_dir: Path) -> bool:
+    """Ensure the output folder has images with a consistent size."""
+    image_files = sorted(list(output_dir.glob('*.png')))
+    if not image_files:
+        print(f"Error: No PNG images found in {output_dir}")
+        return False
+
+    size_to_count = {}
+    for img_path in image_files:
+        with Image.open(img_path) as img:
+            size_to_count[img.size] = size_to_count.get(img.size, 0) + 1
+
+    if len(size_to_count) > 1:
+        print("Error: Output directory contains mixed image resolutions.")
+        for size, count in sorted(size_to_count.items()):
+            print(f"  - {size[0]}x{size[1]}: {count} files")
+        print("Re-run without --skip-conversion to regenerate a clean, consistent output set.")
+        return False
+
+    only_size = next(iter(size_to_count.keys()))
+    print(f"Validated {len(image_files)} PNG frames at {only_size[0]}x{only_size[1]}")
+    return True
 
 
 def main():
@@ -192,6 +247,9 @@ Examples (without uv):
         print(f"Calibration:      {args.calib}")
     print()
 
+    if not check_runtime_dependencies():
+        sys.exit(1)
+
     # Check input directory exists
     if not args.input.exists():
         print(f"Error: Input directory '{args.input}' does not exist")
@@ -205,6 +263,9 @@ Examples (without uv):
         print(f"Successfully converted {count} images\n")
     else:
         print("Skipping image conversion\n")
+
+    if not validate_output_images(args.output):
+        sys.exit(1)
 
     # Run MASt3R-SLAM
     returncode = run_slam(

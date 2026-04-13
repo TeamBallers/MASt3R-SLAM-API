@@ -1,5 +1,7 @@
 import argparse
 import datetime
+import os
+import platform
 import pathlib
 import sys
 import time
@@ -23,6 +25,30 @@ from mast3r_slam.multiprocess_utils import new_queue, try_get_msg
 from mast3r_slam.tracker import FrameTracker
 from mast3r_slam.visualization import WindowMsg, run_visualization
 import torch.multiprocessing as mp
+
+
+def resolve_runtime_device():
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA is not available. MASt3R-SLAM currently requires a CUDA-enabled "
+            "PyTorch install and GPU backend."
+        )
+
+    try:
+        torch.zeros(1, device="cuda:0")
+    except RuntimeError as exc:
+        device_name = torch.cuda.get_device_name(0)
+        cuda_version = torch.version.cuda or "unknown"
+        raise RuntimeError(
+            f"CUDA runtime is present, but the current PyTorch build cannot execute on "
+            f"{device_name}. Installed PyTorch CUDA version: {cuda_version}. "
+            "This project requires a PyTorch build that supports the active GPU "
+            "architecture. For RTX 50-series / sm_120 GPUs, install a newer PyTorch "
+            "CUDA build such as the current cu128 or cu130 release, then reinstall this "
+            "package so the custom extension is rebuilt against that toolkit."
+        ) from exc
+
+    return "cuda:0"
 
 
 def relocalization(frame, keyframes, factor_graph, retrieval_database):
@@ -69,6 +95,80 @@ def relocalization(frame, keyframes, factor_graph, retrieval_database):
             else:
                 factor_graph.solve_GN_rays()
         return successful_loop_closure
+
+
+def is_wsl():
+    release = platform.release().lower()
+    return "microsoft" in release or "WSL_DISTRO_NAME" in os.environ
+
+
+def create_backend_context(model, keyframes, K):
+    device = keyframes.device
+    factor_graph = FactorGraph(model, keyframes, K, device)
+    retrieval_database = load_retriever(model)
+    return factor_graph, retrieval_database
+
+
+def run_backend_step(states, keyframes, factor_graph, retrieval_database):
+    mode = states.get_mode()
+    if mode == Mode.INIT or states.is_paused():
+        return False
+
+    if mode == Mode.RELOC:
+        frame = states.get_frame()
+        success = relocalization(frame, keyframes, factor_graph, retrieval_database)
+        if success:
+            states.set_mode(Mode.TRACKING)
+        states.dequeue_reloc()
+        return True
+
+    idx = -1
+    with states.lock:
+        if len(states.global_optimizer_tasks) > 0:
+            idx = states.global_optimizer_tasks[0]
+    if idx == -1:
+        return False
+
+    kf_idx = []
+    n_consec = 1
+    for j in range(min(n_consec, idx)):
+        kf_idx.append(idx - 1 - j)
+    frame = keyframes[idx]
+    retrieval_inds = retrieval_database.update(
+        frame,
+        add_after_query=True,
+        k=config["retrieval"]["k"],
+        min_thresh=config["retrieval"]["min_thresh"],
+    )
+    kf_idx += retrieval_inds
+
+    lc_inds = set(retrieval_inds)
+    lc_inds.discard(idx - 1)
+    if len(lc_inds) > 0:
+        print("Database retrieval", idx, ": ", lc_inds)
+
+    kf_idx = set(kf_idx)
+    kf_idx.discard(idx)
+    kf_idx = list(kf_idx)
+    frame_idx = [idx] * len(kf_idx)
+    if kf_idx:
+        factor_graph.add_factors(
+            kf_idx, frame_idx, config["local_opt"]["min_match_frac"]
+        )
+
+    with states.lock:
+        states.edges_ii[:] = factor_graph.ii.cpu().tolist()
+        states.edges_jj[:] = factor_graph.jj.cpu().tolist()
+
+    if config["use_calib"]:
+        factor_graph.solve_GN_calib()
+    else:
+        factor_graph.solve_GN_rays()
+
+    with states.lock:
+        if len(states.global_optimizer_tasks) > 0:
+            states.global_optimizer_tasks.pop(0)
+    return True
 
 
 def run_backend(cfg, model, states, keyframes, K):
@@ -146,7 +246,6 @@ if __name__ == "__main__":
     mp.set_start_method("spawn")
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.set_grad_enabled(False)
-    device = "cuda:0"
     save_frames = False
     datetime_now = str(datetime.datetime.now()).replace(" ", "_")
 
@@ -162,6 +261,22 @@ if __name__ == "__main__":
     load_config(args.config)
     print(args.dataset)
     print(config)
+
+    single_process = False
+    if is_wsl():
+        single_process = True
+        config["single_thread"] = True
+        if not args.no_viz:
+            print("[Warning] WSL detected. Disabling visualization and multiprocessing to avoid CUDA IPC errors.")
+            args.no_viz = True
+        else:
+            print("[Warning] WSL detected. Running in single-process mode to avoid CUDA IPC errors.")
+
+    try:
+        device = resolve_runtime_device()
+    except RuntimeError as exc:
+        print(f"[Error] {exc}")
+        sys.exit(1)
 
     manager = mp.Manager()
     main2viz = new_queue(manager, args.no_viz)
@@ -183,8 +298,8 @@ if __name__ == "__main__":
             intrinsics["calibration"],
         )
 
-    keyframes = SharedKeyframes(manager, h, w)
-    states = SharedStates(manager, h, w)
+    keyframes = SharedKeyframes(manager, h, w, shared=not single_process)
+    states = SharedStates(manager, h, w, shared=not single_process)
 
     if not args.no_viz:
         viz = mp.Process(
@@ -192,9 +307,12 @@ if __name__ == "__main__":
             args=(config, states, keyframes, main2viz, viz2main),
         )
         viz.start()
+    else:
+        viz = None
 
     model = load_mast3r(device=device)
-    model.share_memory()
+    if not single_process:
+        model.share_memory()
 
     has_calib = dataset.has_calib()
     use_calib = config["use_calib"]
@@ -222,8 +340,12 @@ if __name__ == "__main__":
     tracker = FrameTracker(model, keyframes, device)
     last_msg = WindowMsg()
 
-    backend = mp.Process(target=run_backend, args=(config, model, states, keyframes, K))
-    backend.start()
+    if single_process:
+        factor_graph, retrieval_database = create_backend_context(model, keyframes, K)
+        backend = None
+    else:
+        backend = mp.Process(target=run_backend, args=(config, model, states, keyframes, K))
+        backend.start()
 
     i = 0
     fps_timer = time.time()
@@ -231,6 +353,9 @@ if __name__ == "__main__":
     frames = []
 
     while True:
+        if single_process:
+            run_backend_step(states, keyframes, factor_graph, retrieval_database)
+
         mode = states.get_mode()
         msg = try_get_msg(viz2main)
         last_msg = msg if msg is not None else last_msg
@@ -286,6 +411,8 @@ if __name__ == "__main__":
             states.queue_reloc()
             # In single threaded mode, make sure relocalization happen for every frame
             while config["single_thread"]:
+                if single_process:
+                    run_backend_step(states, keyframes, factor_graph, retrieval_database)
                 with states.lock:
                     if states.reloc_sem.value == 0:
                         break
@@ -299,6 +426,8 @@ if __name__ == "__main__":
             states.queue_global_optimization(len(keyframes) - 1)
             # In single threaded mode, wait for the backend to finish
             while config["single_thread"]:
+                if single_process:
+                    run_backend_step(states, keyframes, factor_graph, retrieval_database)
                 with states.lock:
                     if len(states.global_optimizer_tasks) == 0:
                         break
@@ -330,6 +459,7 @@ if __name__ == "__main__":
             cv2.imwrite(f"{savedir}/{i}.png", frame)
 
     print("done")
-    backend.join()
-    if not args.no_viz:
+    if backend is not None:
+        backend.join()
+    if viz is not None:
         viz.join()

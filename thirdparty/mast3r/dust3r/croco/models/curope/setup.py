@@ -1,6 +1,8 @@
 # Copyright (C) 2022-present Naver Corporation. All rights reserved.
 # Licensed under CC BY-NC-SA 4.0 (non-commercial use only).
 
+import sys
+
 from setuptools import setup
 from torch import cuda
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension
@@ -15,6 +17,12 @@ all_cuda_archs = cuda.get_gencode_flags().replace('compute=','arch=').split()
     # '-gencode', 'arch=compute_86,code=sm_86'
 # ]
 
+nvcc_flags = ['-O3', '--ptxas-options=-v', '--use_fast_math'] + all_cuda_archs
+
+# CUDA 12.4 on Windows rejects newer MSVC toolsets unless explicitly allowed.
+if sys.platform.startswith('win'):
+    nvcc_flags.append('-allow-unsupported-compiler')
+
 setup(
     name = 'curope',
     ext_modules = [
@@ -25,7 +33,7 @@ setup(
                     "kernels.cu",
                 ],
                 extra_compile_args = dict(
-                    nvcc=['-O3','--ptxas-options=-v',"--use_fast_math"]+all_cuda_archs, 
+                    nvcc=nvcc_flags,
                     cxx=['-O3'])
                 )
     ],

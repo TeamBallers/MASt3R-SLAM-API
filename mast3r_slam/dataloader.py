@@ -4,8 +4,13 @@ import cv2
 from natsort import natsorted
 import numpy as np
 import torch
-import pyrealsense2 as rs
 import yaml
+
+HAS_REALSENSE = True
+try:
+    import pyrealsense2 as rs
+except Exception:
+    HAS_REALSENSE = False
 
 from mast3r_slam.mast3r_utils import resize_img
 from mast3r_slam.config import config
@@ -151,6 +156,11 @@ class SevenScenesDataset(MonocularDataset):
 class RealsenseDataset(MonocularDataset):
     def __init__(self):
         super().__init__()
+        if not HAS_REALSENSE:
+            raise ImportError(
+                "pyrealsense2 is required for realsense datasets. "
+                "Install Intel RealSense dependencies (including libusb) and pyrealsense2."
+            )
         self.dataset_path = None
         self.pipeline = rs.pipeline()
         # self.h, self.w = 720, 1280
