@@ -121,23 +121,18 @@ def run_slam_processing():
 
 def continuous_processor():
     """Background thread that processes images when idle."""
-    global last_process_time
 
     while continuous_mode:
-        time.sleep(1)
+        time.sleep(process_delay)
+        
+        # with processing_lock:
+        #     if is_processing:
+        #         continue  # Skip if already processing
 
-        # Check if enough time has passed since last image
-        if time.time() - last_process_time > process_delay:
-            with processing_lock:
-                if not is_processing and last_process_time > 0:
-                    # Reset timer
-                    last_process_time = 0
+        # Process outside lock
+        run_slam_processing()
 
-            # Process outside lock
-            if last_process_time == 0:
-                run_slam_processing()
-
-        time.sleep(1)
+        # time.sleep(1)
 
 
 @app.post("/upload")
